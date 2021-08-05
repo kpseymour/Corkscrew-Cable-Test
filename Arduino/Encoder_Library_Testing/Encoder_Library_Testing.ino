@@ -1,8 +1,9 @@
 #include <Encoder.h>
 #include <PID_v1.h>
 #include "DualG2HighPowerMotorShield.h"
-DualG2HighPowerMotorShield18v18 md;
+DualG2HighPowerMotorShield24v18 md;
 
+int state = 0;
 
 //-------------------------------------------------------------------------------------------------//
 //   _____         ______ ______ _________     __
@@ -18,25 +19,23 @@ const int elevatorTopPin = 12;
 const int ledPin = 13;
 int ledState = LOW;
 int bottomButtonState, topButtonState;
-int lastBottonButtonState = LOW;
+int lastBottomButtonState = LOW;
 int lastTopButtonState = LOW;
 unsigned long lastDebounceTime = 0; 
 unsigned long debounceDelay = 50;  
-
-
+boolean turning = false;
+unsigned long turnDelay;
 
 // Motor Driver Protection code
 void stopIfFault()
 {
-  if (md.getM1Fault())
-  {
+  if (md.getM1Fault()){
     md.disableDrivers();
   delay(1);
     Serial.println("M1 fault");
     while (1);
   }
-  if (md.getM2Fault())
-  {
+  if (md.getM2Fault()){
     md.disableDrivers();
   delay(1);
     Serial.println("M2 fault");
@@ -56,8 +55,8 @@ void stopIfFault()
  * Best Performance: both pins have interrupt capability 
  * Good Performance: only the first pin has interrupt capability
  * Low Performance:  neither pin has interrupt capability */
-Encoder encoderTwister(2, 6);
-Encoder encoderElevator(3, 7);
+Encoder encoderTwister(11, 13);
+Encoder encoderElevator(3, 5);
 long positionTwister  = -999;
 long positionElevator = -999;
 
@@ -65,7 +64,9 @@ long positionElevator = -999;
 int rotationTicks = 200; 
 
 // set the number of encoder ticks translates to 1 inch of elevator movement
-int inchTicks = 75;
+int inchTicks = 4000;
+int elevatorUpperSetpoint = 10000;
+int elevatorLowerSetpoint = 0;
 
 
 
@@ -82,12 +83,14 @@ double KpT=1, KiT=0, KdT=.01;
 double twisterPIDInput, twisterPIDOutput, twisterPIDSetpoint;
 
 // Set up the PID variables for Elevator here:
-double KpE=1, KiE=0, KdE=.01;
+double KpE=15, KiE=0.5, KdE=0.2;
 double elevatorPIDInput, elevatorPIDOutput, elevatorPIDSetpoint;
 
 PID twisterPID(&twisterPIDInput, &twisterPIDOutput, &twisterPIDSetpoint, KpT, KiT, KdT, DIRECT);
 PID elevatorPID(&elevatorPIDInput, &elevatorPIDOutput, &elevatorPIDSetpoint, KpE, KiE, KdE, DIRECT);
 
+
+boolean elevatorState = true; // true is bottom going up, false is top going down
 
 //-------------------------------------------------------------------------------------------------//
 //   _____ ______ _______ _    _ _____  
@@ -101,6 +104,13 @@ void setup() {
   pinMode(elevatorBottomPin, INPUT);
   pinMode(ledPin, OUTPUT);
 
+  // Initialize the Motor Driver
+  md.init();
+  md.calibrateCurrentOffsets();
+  delay(10);
+  md.flipM1(true);
+  md.flipM2(true);
+
   // set initial LED state
   digitalWrite(ledPin, ledState);
   
@@ -108,11 +118,10 @@ void setup() {
   Serial.println("Elevator Motors Encoder Test:");
   twisterPIDInput = 0;
   twisterPIDSetpoint = rotationTicks;
+  twisterPID.SetMode(AUTOMATIC);
   
   elevatorPIDInput = 0;
-  elevatorPIDSetpoint = inchTicks;
-  
-  twisterPID.SetMode(AUTOMATIC);
+  elevatorPIDSetpoint = 0;
   elevatorPID.SetMode(AUTOMATIC);
 }
 
@@ -126,65 +135,125 @@ void setup() {
 // |______\____/ \____/|_|  
 
 void loop() {
-
-  // check to see if a stop switch has been hit
-  int readingBottom = digitalRead(elevatorBottomPin);
-  int readingTop = digitalRead(elevatorTopPin);
-  if (readingBottom != lastButtonState) {
-    // reset the debouncing timer
-    lastDebounceTime = millis();
-  }
-
-  if ((millis() - lastDebounceTime) > debounceDelay) {
-    if (readingBottom != buttonState) {
-      buttonState = readingBottom;
-      if (buttonState == HIGH) {
-        ledState = !ledState;
+  md.enableDrivers();
+  delay(1);  // The drivers require a maximum of 1ms to elapse when brought out of sleep mode.
+  
+  if (state == 0){ //Inital power on
+    
+    // check to see if a stop switch has been hit
+    int readingBottom = digitalRead(elevatorBottomPin);
+    int readingTop = digitalRead(elevatorTopPin);
+    if (readingBottom != lastBottomButtonState || readingTop != lastTopButtonState) {
+      // reset the debouncing timer
+      lastDebounceTime = millis();
+    }
+  
+    if ((millis() - lastDebounceTime) > debounceDelay) {
+      if (readingBottom != bottomButtonState) {
+        bottomButtonState = readingBottom;
+        if (bottomButtonState == HIGH) {
+          ledState = !ledState;
+        }
+      }
+      if (readingTop != topButtonState) {
+        topButtonState = readingTop;
+        if (topButtonState == HIGH){
+          ledState = !ledState;
+        }
       }
     }
-  }
-  // Change the LED
-  digitalWrite(ledPin, ledState);
-  lastButtonState = readingBottom;
-
-
-//-------------------------------------------------------------------------------------------------//
-
+    // Change the LED
+    digitalWrite(ledPin, ledState);
+    lastBottomButtonState = readingBottom;
+    lastTopButtonState = readingTop;
   
-  long newTwister, newElevator;
-  newTwister = encoderTwister.read();
-  newElevator = encoderElevator.read();
   
-  // check if either of the encoders have changed
-  if (newTwister != positionTwister || newElevator != positionElevator) {
+  //-------------------------------------------------------------------------------------------------//
+  
     
+    long newTwister, newElevator;
+    newTwister = encoderTwister.read();
+    newElevator = encoderElevator.read();
     
-    // run the PIDs to get the new motor power
-    twisterPIDInput = newTwister;
-    elevatorPIDInput = newElevator;
-    twisterPID.SetOutputLimits(-100,100);
-    elevatorPID.SetOutputLimits(-100,100);
-    twisterPID.Compute();
-    elevatorPID.Compute();
+    // check if either of the encoders have changed
+    if (newTwister != positionTwister || newElevator != positionElevator) {
+      //Elevator PID control
+      elevatorPIDInput = newElevator;
+
+      // check to see if the elevator should be raised
+      if (elevatorState){
+        
+          if (elevatorPIDSetpoint <= elevatorUpperSetpoint - 500){ // ramp up to the upper setpoint to not ooverload the motor
+          elevatorPIDSetpoint += 500;
+        }
+        
+        // check if the elevator has reached the target location
+        if (elevatorPIDSetpoint == elevatorUpperSetpoint && newElevator >= elevatorUpperSetpoint - 100 && newElevator <= elevatorUpperSetpoint + 100){ 
+          md.setM1Speed(0);
+          
+          if (turning == false){ //start turning around without blocking the state machine
+            turning = true;
+            turnDelay = millis();
+          }
+          
+          if (turning == true && millis()-turnDelay >= 2000){ //finish turning around and enter the next state
+            elevatorState = false;
+            turning = false;
+          }
+        }
+      }
+
+      // check to see if the elevator should be lowered
+      if (!elevatorState){
+        
+      }
+      
+      
+
+      if (elevatorPIDSetpoint >= -4500 && elevatorState == false){
+        elevatorPIDSetpoint -= 500;
+      }
+      if (elevatorPIDSetpoint == -5000 && newElevator <= -4900 && newElevator >= -5100){
+        elevatorState = true;
+        md.setM1Speed(0);
+        delay(2000);
+      }
+      Serial.print("ElevatorTarget = ");
+      Serial.print(elevatorPIDSetpoint);
+      elevatorPID.SetOutputLimits(-40000,40000);
+      elevatorPID.Compute();
+      Serial.print(", ElevatorPosition = ");
+      Serial.print(newElevator);
+      Serial.print(", ElevatorMotorPower = ");
+      Serial.print(elevatorPIDOutput);
+      Serial.println();
+      positionElevator = newElevator;
+      
+      /* Twister PID
+      twisterPIDInput = newTwister;
+      twisterPID.SetOutputLimits(-400,400);
+      twisterPID.Compute();
+      Serial.print(", TwisterPosition = ");
+      Serial.print(newTwister);
+      Serial.print(", TwisterMotorPower = ");
+      Serial.print(twisterPIDOutput);
+      Serial.println();
+      positionTwister = newTwister;
+*/
+      //Twister is M2
+      
+    }
+    //Elevator is M1
+      md.setM1Speed(elevatorPIDOutput/100);
+      stopIfFault();
+
     
-    //Print out the variables
-    Serial.print("Twister = ");
-    Serial.print(newTwister);
-    Serial.print(", TwisterMotorPower = ");
-    Serial.print(twisterPIDOutput);
-    Serial.print(", Elevator = ");
-    Serial.print(newElevator);
-    Serial.print(", ElevatorMotorPower = ");
-    Serial.print(elevatorPIDOutput);
-    Serial.println();
-    positionTwister = newTwister;
-    positionElevator = newElevator;
-  }
-  // if a character is sent from the serial monitor, reset the encoder positions back to zero.
-  if (Serial.available()) {
-    Serial.read();
-    Serial.println("Reset both encoders to zero");
-    encoderTwister.write(0);
-    encoderElevator.write(0);
+    // if a character is sent from the serial monitor, reset the encoder positions back to zero.
+    if (Serial.available()) {
+      Serial.read();
+      Serial.println("Reset both encoders to zero");
+      encoderTwister.write(0);
+      encoderElevator.write(0);
+    }
   }
 }
