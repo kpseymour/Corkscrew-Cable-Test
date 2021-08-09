@@ -5,8 +5,8 @@ DualG2HighPowerMotorShield24v18 md;
 
 int state = 0;
 
-
-int elevatorUpperSetpoint = 10000;
+// 6000 encoder ticks for 1 coupler revolution
+int elevatorUpperSetpoint = 18000;
 int elevatorLowerSetpoint = 0;
 
 
@@ -22,8 +22,10 @@ int elevatorLowerSetpoint = 0;
 // |_____/_/    \_\_|    |______|  |_|     |_| 
 
 
-const int elevatorBottomPin = 8;
-const int elevatorTopPin = 12;
+const int elevatorBottomPin = 24;
+const int elevatorTopPin = 25;
+const int switchDown = 22;
+const int switchUp = 23;
 const int ledPin = 13;
 int ledState = LOW;
 int bottomButtonState, topButtonState;
@@ -63,8 +65,8 @@ void stopIfFault()
  * Best Performance: both pins have interrupt capability 
  * Good Performance: only the first pin has interrupt capability
  * Low Performance:  neither pin has interrupt capability */
-Encoder encoderTwister(11, 13);
-Encoder encoderElevator(3, 5);
+Encoder encoderTwister(20, 21);
+Encoder encoderElevator(18, 19);
 long positionTwister  = -999;
 long positionElevator = -999;
 
@@ -151,7 +153,7 @@ void loop() {
     // Button push to advance state
     state = 1;
   }
-  if state == 1){ // machine has successfully homes
+  if (state == 1){ // machine has successfully homes
 
     //TODO do the 3 pre-twists on the coupler
 
@@ -276,7 +278,7 @@ void elevatorTurning(){
     Serial.println();
   }
           
-  if (turning == true && millis()-turnDelay >= 2000){ //finish turning around and enter the next state
+  if (turning == true && millis()-turnDelay >= 20){ //finish turning around and enter the next state
     elevatorState = !elevatorState;
     turning = false;
   }
