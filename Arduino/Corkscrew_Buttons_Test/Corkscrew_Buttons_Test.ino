@@ -6,7 +6,7 @@ DualG2HighPowerMotorShield24v18 md;
 
 
 
-int maxCycles = 1000;
+int maxCycles = 10000;
 
 
 
@@ -23,7 +23,7 @@ int preTwists = 3; //rotations
 // robot control variables
 int speedRampIncrement = 500; // lower this number to decrease acceleration of the motors
 int motorTurnsPerTwist = 6000;// 6000 encoder ticks for 1 coupler revolution
-
+int ticksPerInch = 365; // 365 encoder ticks for 1 inch of elevator movement
 
 
 
@@ -38,11 +38,14 @@ int motorTurnsPerTwist = 6000;// 6000 encoder ticks for 1 coupler revolution
 
 int state = 0;
 int i = 0;
+int currentCycles = 0;
 
 const int BottomLimitSwitch = 25;// brown wire is bottom
 const int TopLimitSwitch = 24; // brown wire with blue heatshrink is top
 const int IoButtonDown = 28;// grey wire turning yellow is Top
 const int IoButtonUp = 29;// white wire turning orange is Bottom
+
+long lowerLimitTicks, upperLimitTicks;
 
 // Troubleshooting LED pin
 const int ledPin = 13;
@@ -62,6 +65,7 @@ unsigned long lastDebounceTime = 0;
 unsigned long debounceDelay = 50;  
 
 boolean isElevatorTurning = false;
+boolean isHomingRaising = false;
 
 // variables for the estop checking sequence
 long eStopCheckPos;
@@ -87,6 +91,8 @@ void stopIfFault()
     while (1);
   }
 }
+
+const unsigned int MAX_MESSAGE_LENGTH = 12;
 
 //-------------------------------------------------------------------------------------------------//
 //  __  __  ____ _______ ____  _____   _____ 
@@ -159,7 +165,6 @@ void setup() {
   digitalWrite(ledPin, ledState);
   
   Serial.begin(9600);
-  Serial.println("Elevator Motors Encoder Test:");
   twisterPIDInput = 0;
   twisterPIDSetpoint = 0;
   twisterPID.SetMode(AUTOMATIC);
@@ -179,21 +184,63 @@ void setup() {
 // |______\____/ \____/|_|  
 
 void loop() {
+
+  if (state == 0){//User input cycles and check settings
+    if (i == 0){
+      Serial.println("Welcome to the Corkscrew Cable Testing Machine. Below is the current configuration for this test:");
+      Serial.println();
+      Serial.print("Test Bounds: ");
+      Serial.print(testBottomPosition);
+      Serial.print(" inches to ");
+      Serial.print(testTopPosition);
+      Serial.println(" inches.");
+
+      Serial.print("Limit Switch Locations:   Bottom Switch: ");
+      Serial.print(elevatorBottomSwitchLocation);
+      Serial.print(" inches   Top Switch: ");
+      Serial.print(elevatorTopSwitchLocation);
+      Serial.println(" inches.");
+
+      Serial.print("Cable pre-twists to be done: ");
+      Serial.println(preTwists);
+      Serial.println();
+      
+      Serial.print("Cycles to be run: ");
+      Serial.println(maxCycles);
+      
+      Serial.println();
+      Serial.println("Press Up Button to initialize Homing Sequence.");
+      i++;
+    }
+    
+    
+    //TODO insert initial button push to advance to motor testing 
+
+    // Button push to advance state
+    int reading = digitalRead(IoButtonUp);
+    if (reading == HIGH){
+      i=0;
+      state = 1;
+    }
+    
+  }
+
+  //-------------------------------------------------------------------------------------------------//
+
   
-  
-  if (state == 0){ //Inital power on
+  if (state == 1){// check that the motors are operational.
     if(i == 0){
       md.enableDrivers();
       delay(1);  // The drivers require a maximum of 1ms to elapse when brought out of sleep mode.
-      // newEstopCheckPos = encoderTwister.read(); ---------------------------------------UNCOMMENT TO MAKE IT TWISTER
+      // eStopCheckPos = encoderTwister.read(); ---------------------------------------UNCOMMENT TO MAKE IT TWISTER
       eStopCheckPos = encoderElevator.read();
       i++;
     }
     else{
       if (i < 50){
-        Serial.println("Checking Motors");
         md.setM1Speed(15); //--------------------------------------------------------------MAKE M2 FOR TWISTER
-        newEstopCheckPos = encoderElevator.read();
+        delay(10);
+        newEstopCheckPos = encoderElevator.read(); //-------------------------------------MAKE TWISTER
         i++;
       }
       else{
@@ -206,11 +253,11 @@ void loop() {
       if (newEstopCheckPos%eStopCheckPos >= 10 || newEstopCheckPos%eStopCheckPos <= -10){
         Serial.println("Motors Check Pass");
         i = 0;
-        state = 1;
+        state = 2;
       }
       else{
         if (i==50){
-          Serial.println("Motors Check Fail. Check the eStop and Power Switch. Press up button to re-check");
+          Serial.println("Motors Check Fail. Check the eStop and Power Supply. Press up button to re-run");
           i++;
         }
         
@@ -222,32 +269,75 @@ void loop() {
       }
     }
   }
+
+  //-------------------------------------------------------------------------------------------------//
+
   
-  if (state == 1){// homing sequence for elevator
-    // print out reminder for all of the robot settings
-    // push button to initialize homing sequence
-    Serial.println(i);
+  if (state == 2){ // machine homing sequence
+    
+    Serial.println("HOMING");
+    
+    //get the readings from the limit switches
+    int lowerLimitSwitch = digitalRead(BottomLimitSwitch);
+    int upperLimitSwitch = digitalRead(TopLimitSwitch);
+    
+    // check to see if the lower limit swith is hit
+    if (lowerLimitSwitch == HIGH && isHoming){
+      md.setM1Speed(0);
+      lowerLimitTicks = encoderElevator.read();
+      Serial.print("Lower Home Position: ");
+      Serial.println(lowerLimitTicks);
+      isHomingRaising = true;
+    }
+    if (upperLimitSwitch == HIGH && isHoming){
+      if (!isHomingRaising){//check to see if the switch was pressed at the start of the test
+        upperLimitTicks = encoderElevator.read();
+      }
+      else{//
+        md.setM1Speed(0);
+        upperLimitTicks = encoderElevator.read();
+        Serial.print("Upper Home Position: ");
+        Serial.println(lowerLimitTicks);
+      }
+    }
+    // elevator homing sequence
+    
+    
+    Serial.print (i);
+    md.setM1Speed(0);
+    md.disableDrivers();
+    delay(20);
+
+
+    
+    while(1);
+
+    //TODO Write the homing sequence
+
+    // Button push to advance to testing
+    state = 3;
+  }
+
+  //-------------------------------------------------------------------------------------------------//
+
+  
+  if (state == 3){ // machine 3 pre-twists on the cable
     md.setM1Speed(0);
     md.disableDrivers();
     delay(20);
     while(1);
-    //TODO insert initial button push to home the machine 
-
-    // Button push to advance state
-    state = 2;
-  }
-  
-  if (state == 2){ // machine has successfully homed
 
     //TODO do the 3 pre-twists on the coupler
 
     // Button push to advance to testing
-    state = 2;
+    state = 4;
   }
-  
-  if (state == 2){// main motion loop
+
   //-------------------------------------------------------------------------------------------------//
+
   
+  
+  if (state == 4){// main motion loop
     
     newTwisterPID = encoderTwister.read();
     newElevatorPID = encoderElevator.read();
@@ -337,3 +427,39 @@ void elevatorTurning(){
     isElevatorTurning = false;
   }
 }
+
+//int serialToInt(){
+//
+// //Check to see if anything is available in the serial receive buffer
+// while (Serial.available() > 0)
+// {
+//   //Create a place to hold the incoming message
+//   static char message[MAX_MESSAGE_LENGTH];
+//   static unsigned int message_pos = 0;
+//
+//   //Read the next available byte in the serial receive buffer
+//   char inByte = Serial.read();
+//
+//   //Message coming in (check not terminating character) and guard for over message size
+//   if ( inByte != '\n' && (message_pos < MAX_MESSAGE_LENGTH - 1) ){
+//     //Add the incoming byte to our message
+//     message[message_pos] = inByte;
+//     message_pos++;
+//   }
+//   //Full message received...
+//   else
+//   {
+//   //Add null character to string
+//   message[message_pos] = '\0';
+//  
+//   //Print the message (or do other things)
+//   Serial.println(message);
+//  
+//   //Or convert to integer and print
+//   int number = atoi(message);
+//   Serial.println(number);
+//  
+//   return number;
+//  }
+// }
+//}
