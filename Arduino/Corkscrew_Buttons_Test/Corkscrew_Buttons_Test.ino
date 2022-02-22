@@ -67,6 +67,8 @@ unsigned long debounceDelay = 50;
 boolean isElevatorTurning = false;
 boolean isHomingRaising = false;
 boolean isHoming = true;
+boolean isElevatorInHomeLocation = false;
+boolean isTwisterInHomeLocation = false;
 
 // variables for the estop checking sequence
 long eStopCheckPos;
@@ -233,19 +235,19 @@ void loop() {
     if(i == 0){
       md.enableDrivers();
       delay(1);  // The drivers require a maximum of 1ms to elapse when brought out of sleep mode.
-      // eStopCheckPos = encoderTwister.read(); ---------------------------------------UNCOMMENT TO MAKE IT TWISTER
-      eStopCheckPos = encoderElevator.read();
+      eStopCheckPos = encoderTwister.read(); //---------------------------------------UNCOMMENT TO MAKE IT TWISTER
+      // eStopCheckPos = encoderElevator.read();
       i++;
     }
     else{
       if (i < 50){
-        md.setM1Speed(15); //--------------------------------------------------------------MAKE M2 FOR TWISTER
+        md.setM2Speed(15); //--------------------------------------------------------------MAKE M2 FOR TWISTER
         delay(10);
-        newEstopCheckPos = encoderElevator.read(); //-------------------------------------MAKE TWISTER
+        newEstopCheckPos = encoderTwister.read(); //-------------------------------------MAKE TWISTER
         i++;
       }
       else{
-        md.setM1Speed(0);
+        md.setM2Speed(0);
       }
     }
     
@@ -266,6 +268,7 @@ void loop() {
         int reading = digitalRead(IoButtonUp);
         if (reading ==HIGH){
           i = 0;
+          state += 1;
         }
         int readingBack = digitalRead(IoButtonDown);
         if (reading == HIGH){
@@ -315,8 +318,8 @@ void loop() {
       }
     }
     
-    if (isHoming){
-      if (isHomingRaising){
+    if (isHoming){ // default true
+      if (isHomingRaising){ // default false
         md.setM1Speed(20);
         // if the machine is homing and is raising then slowly raise the elevator
       }
@@ -328,11 +331,20 @@ void loop() {
     }
     else{
       i=0;
+      //set the points that the elevtaor needs to move to
       elevatorUpperSetpoint = upperLimitTicks - (ticksPerInch * (elevatorTopSwitchLocation - testTopPosition));
       elevatorLowerSetpoint = lowerLimitTicks + (ticksPerInch * (elevatorBottomSwitchLocation - testBottomPosition));
       
       // go to the lower setpoint then set to the next state
-      //TODO write PID position setter
+      if (isElevatorInHomeLocation == false && isTwisterInHomeLocation == false){
+        isElevatorInHomeLocation = goToElevatorSetpoint(elevatorLowerSetpoint);
+        isTwisterInHomeLocation = goToTwisterSetpoint(motorTurnsPerTwist * preTwists);
+      }
+      else{
+        md.setM1Speed(0);
+        
+      }
+      
     }
     // elevator homing sequence
     
@@ -345,8 +357,6 @@ void loop() {
 
     
     while(1);
-
-    //TODO Write the homing sequence
 
     // Button push to advance to testing
     state = 3;
@@ -408,7 +418,7 @@ void loop() {
       }
       Serial.print("ElTarget = ");
       Serial.print(elevatorPIDSetpoint);
-      elevatorPID.SetOutputLimits(-40000,40000);//set the max and min PID values that the algorithm can return (100x max motor speed of 400)      
+      elevatorPID.SetOutputLimits(-40000,40000);//set the max and min PID values that the equation can return (100x max motor speed of 400)      
       elevatorPID.Compute();
       Serial.print(", ElPos = ");
       Serial.print(newElevatorPID);
@@ -495,7 +505,7 @@ boolean goToElevatorSetpoint(int elevatorSetpoint){
         Serial.println();
         Serial.println("Made it!");
         Serial.println();
-        return 1;
+        return true;
       }
     }
 
@@ -506,13 +516,13 @@ boolean goToElevatorSetpoint(int elevatorSetpoint){
         elevatorPIDSetpoint -= speedRampIncrement;
       }
       
-      // check if the elevator has reached the target location and turn around
+      // check if the elevator has reached the target location and stop moving
       if (elevatorPIDSetpoint == elevatorSetpoint && currentElevatorPosition >= elevatorSetpoint - 100 && currentElevatorPosition <= elevatorSetpoint + 100){ 
         md.setM1Speed(0);
         Serial.println();
         Serial.println("Made it!");
         Serial.println();
-        return 1;
+        return true;
       }
     }
     Serial.print("ElTarget = ");
@@ -528,130 +538,70 @@ boolean goToElevatorSetpoint(int elevatorSetpoint){
     //Elevator is M1
     md.setM1Speed(elevatorPIDOutput/100);
     stopIfFault();
-    return 0;
-  
+    return false;
 }
 
 boolean goToTwisterSetpoint (int twisterSetpoint){
-  //The PID control function for moving the twister to a certain location
-  // return false while moving to position
-  // retrun true if reached position
-  int currentTwisterPosition = encoderTwister.read();
-  newTwisterPID = encoderTwister.read();
-  newElevatorPID = encoderElevator.read();
-  
-  // check if either of the encoders have changed
-  if (newTwisterPID != positionTwister || newElevatorPID != positionElevator) {
-    //Elevator PID control
-    elevatorPIDInput = newElevatorPID;
-
-    // check to see if the elevator should be raised
-    if (isElevatorRising){
-      elevatorUpperSetpoint -= elevatorUpperSetpoint%speedRampIncrement; // stops the loop from failing to exit properly
-      if (elevatorPIDSetpoint <= elevatorUpperSetpoint - speedRampIncrement){ // slowly accelerate to not overload the motor
-        elevatorPIDSetpoint += speedRampIncrement;
-      }
-      
-      // check if the elevator has reached the target location
-      if (elevatorPIDSetpoint == elevatorUpperSetpoint && newElevatorPID >= elevatorUpperSetpoint - 100 && newElevatorPID <= elevatorUpperSetpoint + 100){ 
-        elevatorTurning();
-      }
-    }
-
-    // check to see if the elevator should be lowered
-    if (!isElevatorRising){
-      elevatorLowerSetpoint -= elevatorLowerSetpoint%speedRampIncrement; // stops the loop from failing to exit properly
-      if (elevatorPIDSetpoint >= elevatorLowerSetpoint + speedRampIncrement){ // slowly accelerate to not overload the motor
-        elevatorPIDSetpoint -= speedRampIncrement;
-      }
-      
-      // check if the elevator has reached the target location and turn around
-      if (elevatorPIDSetpoint == elevatorLowerSetpoint && newElevatorPID >= elevatorLowerSetpoint - 100 && newElevatorPID <= elevatorLowerSetpoint + 100){ 
-        elevatorTurning();
-      }
-    }
-    Serial.print("ElTarget = ");
-    Serial.print(elevatorPIDSetpoint);
-    elevatorPID.SetOutputLimits(-40000,40000);//set the max and min PID values that the algorithm can return (100x max motor speed of 400)      
-    elevatorPID.Compute();
-    Serial.print(", ElPos = ");
-    Serial.print(newElevatorPID);
-    Serial.print(", ElSpeed = ");
-    Serial.print(elevatorPIDOutput);
-    Serial.println();
-    positionElevator = newElevatorPID;
-    
-    /* Twister PID
-    twisterPIDInput = newTwisterPID;
-    twisterPID.SetOutputLimits(-400,400);
-    twisterPID.Compute();
-    Serial.print(", TwisterPosition = ");
-    Serial.print(newTwisterPID);
-    Serial.print(", TwisterMotorPower = ");
-    Serial.print(twisterPIDOutput);
-    Serial.println();
-    positionTwister = newTwisterPID;
-*/
-    
-  }
-  //Elevator is M1
-    md.setM1Speed(elevatorPIDOutput/100);
-    stopIfFault();
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-//int serialToInt(){
-//
-// //Check to see if anything is available in the serial receive buffer
-// while (Serial.available() > 0)
-// {
-//   //Create a place to hold the incoming message
-//   static char message[MAX_MESSAGE_LENGTH];
-//   static unsigned int message_pos = 0;
-//
-//   //Read the next available byte in the serial receive buffer
-//   char inByte = Serial.read();
-//
-//   //Message coming in (check not terminating character) and guard for over message size
-//   if ( inByte != '\n' && (message_pos < MAX_MESSAGE_LENGTH - 1) ){
-//     //Add the incoming byte to our message
-//     message[message_pos] = inByte;
-//     message_pos++;
-//   }
-//   //Full message received...
-//   else
-//   {
-//   //Add null character to string
-//   message[message_pos] = '\0';
-//  
-//   //Print the message (or do other things)
-//   Serial.println(message);
-//  
-//   //Or convert to integer and print
-//   int number = atoi(message);
-//   Serial.println(number);
-//  
-//   return number;
+//  //The PID control function for moving the twister to a certain location
+//  // return false while moving to position
+//  // retrun true if reached position
+//  int currentTwisterPosition = encoderTwister.read();
+//  if (twisterSetpoint >= currentTwisterPosition){
+//    isTwisterRising = true;
 //  }
-// }
-//}
+//  else{
+//    isTwisterRising = false;
+//  }
+//  
+//  // check if either of the encoders have changed
+//    twisterPIDInput = currentTwisterPosition;
+//
+//    // check to see if the twister should be raised
+//    if (isTwisterRising){
+//      twisterSetpoint -= twisterSetpoint%speedRampIncrement; // stops the loop from failing to exit properly
+//      if (twisterPIDSetpoint <= twisterSetpoint - speedRampIncrement){ // slowly accelerate to not overload the motor
+//        twisterPIDSetpoint += speedRampIncrement;
+//      }
+//      
+//      // check if the twister has reached the target location
+//      if (twisterPIDSetpoint == twisterSetpoint && currentTwisterPosition >= twisterSetpoint - 100 && currentTwisterPosition <= twisterSetpoint + 100){ 
+//        md.setM2Speed(0);
+//        Serial.println();
+//        Serial.println("Twister made it!");
+//        Serial.println();
+//        return true;
+//      }
+//    }
+//
+//    // check to see if the twister should be lowered
+//    if (!isTwisterRising){
+//      twisterSetpoint -= twisterSetpoint%speedRampIncrement; // stops the loop from failing to exit properly
+//      if (twisterPIDSetpoint >= twisterSetpoint + speedRampIncrement){ // slowly accelerate to not overload the motor
+//        twisterPIDSetpoint -= speedRampIncrement;
+//      }
+//      
+//      // check if the twister has reached the target location and stop moving
+//      if (twisterPIDSetpoint == twisterSetpoint && currentTwisterPosition >= twisterSetpoint - 100 && currentTwisterPosition <= twisterSetpoint + 100){ 
+//        md.setM2Speed(0);
+//        Serial.println();
+//        Serial.println("Twister made it!");
+//        Serial.println();
+//        return true;
+//      }
+//    }
+//    Serial.print("TwistTarget = ");
+//    Serial.print(twisterPIDSetpoint);
+//    twisterPID.SetOutputLimits(-40000,40000);//set the max and min PID values that the algorithm can return (100x max motor speed of 400)      
+//    twisterPID.Compute();
+//    Serial.print(", TwistPos = ");
+//    Serial.print(newTwisterPID);
+//    Serial.print(", TwistSpeed = ");
+//    Serial.print(twisterPIDOutput);
+//    Serial.println();
+//    
+//    //Twister is M2
+//    md.setM2Speed(twisterPIDOutput/100);
+//    stopIfFault();
+//    return false;
+return true;
+}
