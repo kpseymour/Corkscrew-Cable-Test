@@ -171,6 +171,7 @@ void setup() {
 
 void loop() {
   delay(1);
+  stopIfFault();
   // put your main code here, to run repeatedly:
   int lowerLimitSwitch = digitalRead(BottomLimitSwitch);
   int upperLimitSwitch = digitalRead(TopLimitSwitch);
@@ -239,6 +240,20 @@ void loop() {
 // Motor Driver Protection code
 void stopIfFault()
 {
+  Serial.println("      _                         ");
+        Serial.println("      \\\\`*-.-.                  ");
+        Serial.println("       '  : `. .                ");
+        Serial.println("       : _   '  \\               ");
+        Serial.println("       ; *` _.   `*-._          ");
+        Serial.println("       `-.-'          `-.       ");
+        Serial.println("         ;       `       `.     ");
+        Serial.println("         :.       .        \\    ");
+        Serial.println("         . \\\\  .   :   .-'   .  ");
+        Serial.println("         '  `+.;  ;  '      :   ");
+        Serial.println("         :  '  |    ;       ;-. ");
+        Serial.println("         ; ;   : :`-:     _.`* ;");
+        Serial.println("      .*' /  .*' ; .*`- +'  `*' ");
+        Serial.println("      `*-*   `*-*  `*-*'        ");
   if (md.getM1Fault()){
     md.disableDrivers();
   delay(1);
