@@ -6,7 +6,7 @@ DualG2HighPowerMotorShield24v18 md;
 
 // The test varaibles - these variables will change for different tests to be run
 
-int maxCycles = 2;
+int maxCycles = 40;
 int testBottomPosition = 12; //inches from top of coupler
 int testTopPosition = 18; //inches from top of coupler
 
@@ -14,7 +14,7 @@ double elevatorBottomSwitchLocation = 9; //inches from top of coupler - below th
 double elevatorTopSwitchLocation = 19.5; //inches from top of coupler - above the top test position
 
 int preTwists = 3; //rotations
-boolean isTwisterTestRotationClockwise = false;
+boolean isTwisterTestRotationClockwise = true;
 
 
 
@@ -76,8 +76,11 @@ boolean isSettingSet = false;
 boolean isElevatorRising = true; // true is bottom going up, false is top going down
 boolean isTwisterCCW = true;
 boolean isLowerLimitKnown, isUpperLimitKnown = false;
-boolean twisterTriggerGo, elevatorTriggerGo = false;
 boolean isRobotReadyToTest = false;
+boolean isFirstTestSegment = true;
+boolean isSecondTestSegment = false;
+boolean twisterTriggerGo, elevatorTriggerGo = true;
+boolean isFirstSegmentElevatorComplete, isFirstSegmentTwistComplete, isSecondSegmentElevatorComplete, isSecondSegmentTwistComplete = false;
 
 // variables for the estop checking sequence
 long eStopCheckPos;
@@ -114,10 +117,10 @@ const int IoButtonDown = 28;// grey wire turning yellow is Top
 const int IoButtonUp = 29;// white wire turning orange is Bottom
 
 // encoder ticks to real values translation
-const int speedRampIncrementTwister = 50; // lower this number to decrease acceleration of the Twister
+const int speedRampIncrementTwister = 5; // lower this number to decrease acceleration of the Twister
 const int ticksPerTwist = 5850;// 5850 encoder ticks for 1 coupler revolution
-const int speedRampIncrementElevator = 10;// lower this number to decrease acceleration of the Elevator
-const int ticksPerInch = 380; // 380 encoder ticks for 1 inch of elevator movement
+const int speedRampIncrementElevator = 3;// lower this number to decrease acceleration of the Elevator
+const int ticksPerInch = 390; // 390 encoder ticks for 1 inch of elevator movement
 
 
 //-------------------------------------------------------------------------------------------------//
@@ -129,11 +132,11 @@ const int ticksPerInch = 380; // 380 encoder ticks for 1 inch of elevator moveme
 // |_|   |_____|_____/ 
 
 // Set up the PID variables for Twister here:
-double KpT=20, KiT=0.9, KdT=0.2;
+double KpT=30, KiT=3, KdT=2;
 double twisterPIDInput, twisterPIDOutput, twisterPIDSetpoint;
 
 // Set up the PID variables for Elevator here:
-double KpE=30, KiE=0.9, KdE=0.2;
+double KpE=20, KiE=2, KdE=1.5;
 double elevatorPIDInput, elevatorPIDOutput, elevatorPIDSetpoint;
 int newTwisterPID, newElevatorPID;
 
@@ -198,11 +201,13 @@ void loop() {
   }
 
   // 1ms delay to stop the loop from running too quickly and unpredicatably
-  delay(2);
+  delay(1);
 
   // read the limit switches every cycle to ensure that a trigger is not missed - optimally these would be on interrupt pins
   int lowerLimitSwitch = digitalRead(BottomLimitSwitch);
   int upperLimitSwitch = digitalRead(TopLimitSwitch);
+  long currentElevatorPosition = -encoderElevator.read();
+  long currentTwisterPosition = encoderTwister.read();
 
 
   //-------------------------------------------------------------------------------------------------//
@@ -294,7 +299,16 @@ void loop() {
 
       Serial.print("Cable pre-twists to be done: ");
       Serial.println(preTwists);
-      Serial.println();
+
+      Serial.print("Cable Twist Direction: ");
+      if (isTwisterTestRotationClockwise){
+        Serial.println("Clockwise");
+        Serial.println();
+      }
+      else{
+        Serial.print("CounterClockwise");
+        Serial.println();
+      }
       
       Serial.print("Cycles to be run: ");
       Serial.println(maxCycles);
@@ -327,7 +341,7 @@ void loop() {
     // After the homing is completed this state will be skipped
     // ***
     
-    long currentElevatorPosition = -encoderElevator.read();
+    
     
     if (!isHomed){ 
       // check to see that the robot has not completed the homing sequence yet
@@ -401,8 +415,13 @@ void loop() {
       }
       if (isLowerLimitKnown && isUpperLimitKnown){
         // set the elevator to the top test position and complete the homing sequence
-        if(goToElevatorSetpoint(upperBoundTicks)){
+        if(currentElevatorPosition > upperBoundTicks){
+          md.setM1Speed(-20);
+        }
+        else{
+          md.setM1Speed(0);
           isHomed = true;
+          delay(100);
         }
       }
     }
@@ -453,9 +472,9 @@ void loop() {
     if (!isRobotReadyToTest){
       if (i==0){
         if (goToTwisterSetpoint(twisterZeroPos)){
-          // Set the elevator to the top starting position then set the machine as ready for testing
-          Serial.println("Press Up Button to begin testing");
           i++;
+          delay(100);
+          Serial.println("Press Up Button to begin testing");
         }
       }
       int reading = digitalRead(IoButtonUp);
@@ -464,6 +483,8 @@ void loop() {
       }
     }
     else{
+      twisterTriggerGo = true;
+      delay(500);
       i = 0;
       state = 4;
     }
@@ -486,54 +507,57 @@ void loop() {
     if (lowerLimitSwitch == LOW && upperLimitSwitch == LOW){
       // make sure that neither of the limit switches have been hit during testing
       if (currentCycles < maxCycles){
-        if (testState == 0){
-          // Logic for controlling the elvator descent and cable twist
-          ////////////////////////////////////////////////////////////////////////////
-        }
-        if (testState == 1){
-          if (isFirstTestSegment == true){
-            if(elevatorTriggerGo == true){
-              if (goToElevatorSetpoint(lowerBoundTicks)){
-                elevatorTriggerGo = false;
-                isFirstSegmentElevatorComplete = true;
-              }
-            }
-            if (twisterTriggerGo == true){
-              if (goToTwisterSetpoint(twisterMaxPos)){
-                 twisterTriggerGo = false;
-                 isFirstSegmentTwistComplete = true;
-              }
-            }
-            if (isFirstSegmentTwistComplete && isFirstSegmentElevatorComplete){
-              delay(100);
-              testState = 2;
+        
+        // first test segment is elevator lowering and twister twisting the cable up
+        if (isFirstTestSegment == true){
+          if(elevatorTriggerGo == true){
+            if (goToElevatorSetpoint(lowerBoundTicks)){
+              elevatorTriggerGo = false;
+              isFirstSegmentElevatorComplete = true;
             }
           }
+          if (twisterTriggerGo == true){
+            if (goToTwisterSetpoint(twisterMaxPos)){
+               twisterTriggerGo = false;
+               isFirstSegmentTwistComplete = true;
+            }
+          }
+          if (isFirstSegmentTwistComplete && isFirstSegmentElevatorComplete){
+            delay(100);
+            isFirstSegmentTwistComplete = false;
+            isFirstSegmentElevatorComplete = false;
+            isFirstTestSegment = false;
+            isSecondTestSegment = true;
+            twisterTriggerGo = true;
+            elevatorTriggerGo = true;
+          }
         }
-        if (testState == 2){
-          //////////////////////////////////////////////////////////////
-        }
-        if (testState == 3){
-          if (isFirstTestSegment == true){
-            if(elevatorTriggerGo == true){
-              if (goToElevatorSetpoint(upperBoundTicks)){
-                elevatorTriggerGo = false;
-                isSecondSegmentElevatorComplete = true;
-              }
+
+        // second test segment is elevator rising and twister untwisting the cable
+        if (isSecondTestSegment == true){
+          if(elevatorTriggerGo == true){
+            if (goToElevatorSetpoint(upperBoundTicks)){
+              elevatorTriggerGo = false;
+              isSecondSegmentElevatorComplete = true;
             }
-            if (twisterTriggerGo == true){
-              if (goToTwisterSetpoint(twisterZeroPos)){
-                 twisterTriggerGo = false;
-                 isSecondSegmentTwistComplete = true;
-              }
+          }
+          if (twisterTriggerGo == true){
+            if (goToTwisterSetpoint(twisterZeroPos)){
+               twisterTriggerGo = false;
+               isSecondSegmentTwistComplete = true;
             }
-            if (isSecondSegmentTwistComplete && isSecondSegmentElevatorComplete){
-              delay(100);
-              testState = 0;
-              currentCycles++;
-              Serial.print("Current Cycle: ");
-              Serial.println(currentCycles);
-            }
+          }
+          if (isSecondSegmentTwistComplete && isSecondSegmentElevatorComplete){
+            delay(100);
+            isSecondSegmentTwistComplete = false;
+            isSecondSegmentElevatorComplete = false;
+            isFirstTestSegment = true;
+            isSecondTestSegment = false;
+            twisterTriggerGo = true;
+            elevatorTriggerGo = true;
+            currentCycles++;
+            Serial.print("Current Cycle: ");
+            Serial.println(currentCycles);
           }
         }
       }
@@ -545,8 +569,14 @@ void loop() {
       }
     }
     else{
+      // case if one of the limit swtiches has been hit
+      // this means that the elevator has drifted outside of the safe testing area and will be homed again
       md.setM1Speed(0);
       md.setM2Speed(0);
+      isFirstTestSegment = true;
+      isSecondTestSegment = false;
+      twisterTriggerGo = true;
+      elevatorTriggerGo = true;
       if (lowerLimitSwitch == HIGH){
         Serial.print(retryCount);
         Serial.println(" Lower Limit Switch Hit ---------------------------------------------------------- ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR");
@@ -615,10 +645,8 @@ boolean goToElevatorSetpoint(long elevatorSetpoint){
       // check if the elevator has reached the target location
       if (elevatorPIDSetpoint == elevatorSetpoint && currentElevatorPosition >= elevatorSetpoint - 50 && currentElevatorPosition <= elevatorSetpoint + 50){ 
         md.setM1Speed(0);
-        Serial.println();
         Serial.print("Elevator Up ");
         Serial.println(currentElevatorPosition);
-        Serial.println();
         return true;
       }
     }
@@ -633,10 +661,8 @@ boolean goToElevatorSetpoint(long elevatorSetpoint){
       // check if the elevator has reached the target location and stop moving
       if (elevatorPIDSetpoint == elevatorSetpoint && currentElevatorPosition >= elevatorSetpoint - 50 && currentElevatorPosition <= elevatorSetpoint + 50){ 
         md.setM1Speed(0);
-        Serial.println();
         Serial.print("Elevator Down ");
         Serial.println(currentElevatorPosition);
-        Serial.println();
         return true;
       }
     }
@@ -655,8 +681,54 @@ boolean goToElevatorSetpoint(long elevatorSetpoint){
     stopIfFault();
     return false;
 }
-
 boolean goToTwisterSetpoint(long twisterSetpoint){
+  long currentTwisterPosition = encoderTwister.read();
+  if (twisterSetpoint >= currentTwisterPosition){
+    isTwisterCCW = true;
+  }
+  else{
+    isTwisterCCW = false;
+  }
+  if (isTwisterCCW){
+    if (twisterSetpoint - currentTwisterPosition > (100*speedRampIncrementTwister) && j >= 200){
+      md.setM2Speed(300);
+    }
+    else if (twisterSetpoint - currentTwisterPosition > 0 || j < 200){
+      md.setM2Speed(120);
+      j++;
+    }
+    else{
+      md.setM2Speed(0);
+      twisterPIDSetpoint = currentTwisterPosition + speedRampIncrementTwister;
+      twisterPID.Compute();
+      Serial.print("Twister CCW ");
+      Serial.println(currentTwisterPosition);
+      j = 0;
+      return true;
+    }
+  }
+  else{
+    if (twisterSetpoint - currentTwisterPosition < (-100*speedRampIncrementTwister) && j >= 200){
+      md.setM2Speed(-300);
+    }
+    else if (twisterSetpoint - currentTwisterPosition < 0 || j < 200){
+      md.setM2Speed(-120);
+      j++;
+    }
+    else{
+      md.setM2Speed(0);
+      twisterPIDSetpoint = currentTwisterPosition - speedRampIncrementTwister;
+      twisterPID.Compute();
+      Serial.print("Twister Clockwise ");
+      Serial.println(currentTwisterPosition);
+      j = 0;
+      return true;
+    }
+  }
+  return false;
+}
+
+boolean goToTwisterSetpoints(long twisterSetpoint){
   // The PID control function for moving the twister to a certain location
   // return false while moving to position
   // retrun true if reached position
@@ -676,15 +748,14 @@ boolean goToTwisterSetpoint(long twisterSetpoint){
       twisterSetpoint -= twisterSetpoint%speedRampIncrementTwister; // stops the loop from failing to exit properly
       if (twisterPIDSetpoint <= twisterSetpoint - speedRampIncrementTwister){ // slowly accelerate to not overload the motor
         twisterPIDSetpoint += speedRampIncrementTwister;
+        Serial.println(twisterPIDSetpoint);
       }
       
       // check if the twister has reached the target location
       if (twisterPIDSetpoint == twisterSetpoint && currentTwisterPosition >= twisterSetpoint - 30 && currentTwisterPosition <= twisterSetpoint + 30){ 
         md.setM2Speed(0);
-        Serial.println();
         Serial.print("Twister CCW ");
         Serial.println(currentTwisterPosition);
-        Serial.println();
         return true;
       }
     }
@@ -699,16 +770,14 @@ boolean goToTwisterSetpoint(long twisterSetpoint){
       // check if the twister has reached the target location and stop moving
       if (twisterPIDSetpoint == twisterSetpoint && currentTwisterPosition >= twisterSetpoint - 30 && currentTwisterPosition <= twisterSetpoint + 30){ 
         md.setM2Speed(0);
-        Serial.println();
         Serial.print("Twister Clockwise ");
         Serial.println(currentTwisterPosition);
-        Serial.println();
         return true;
       }
     }
     //Serial.print("TwistTarget = ");
     //Serial.print(twisterPIDSetpoint);
-    twisterPID.SetOutputLimits(-40000,40000);//set the max and min PID values that the algorithm can return (100x max motor speed of 400)      
+    twisterPID.SetOutputLimits(-30000,30000);//set the max and min PID values that the algorithm can return (100x max motor speed of 400 is 40000)      
     twisterPID.Compute();
     //Serial.print(", TwistPos = ");
     //Serial.print(currentTwisterPosition);
@@ -717,7 +786,7 @@ boolean goToTwisterSetpoint(long twisterSetpoint){
     //Serial.println();
     
     //Twister is M2
-    int M2Speed = twisterPIDOutput/80;
+    int M2Speed = twisterPIDOutput/100;
     if (M2Speed > 400){
       M2Speed = 400;
     }
