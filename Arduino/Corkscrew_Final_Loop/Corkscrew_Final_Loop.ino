@@ -51,6 +51,7 @@ long twisterZeroPos, twisterMaxPos;
 // Troubleshooting LED pin
 const int ledPin = 13;
 int ledState = LOW;
+const int cableEyePin = A8;
 
 // variabels for limit switches
 int bottomSwitchState, topSwitchState;
@@ -67,6 +68,7 @@ unsigned long debounceDelay = 50;
 
 // logic booleans
 boolean isRobotKnownOn = false;
+boolean isCableFailure = false;
 boolean isElevatorTurning = false;
 boolean isHomingRaising = false;
 boolean isHomed, isRetry = false;
@@ -504,7 +506,13 @@ void loop() {
     // TODO: Add cableEye functionality so that the test will stop on a cable failure
     // ***
     
-    if (lowerLimitSwitch == LOW && upperLimitSwitch == LOW){
+    if (lowerLimitSwitch == LOW && upperLimitSwitch == LOW && !isCableFailure){
+      // check the pin connected to the cable eye machine for a value over 1000, the actual value is 1023 if there is a failure. 
+      // make sure that one of the cable eye light emeter wires is in the correct analog pin, and the other is connected to ground.
+      int cableEyeValue = analogRead(cableEyePin);
+      if (cableEyeValue > 1000){
+        isCableFailure = true;
+      }
       // make sure that neither of the limit switches have been hit during testing
       if (currentCycles < maxCycles){
         
@@ -569,34 +577,43 @@ void loop() {
       }
     }
     else{
-      // case if one of the limit swtiches has been hit
-      // this means that the elevator has drifted outside of the safe testing area and will be homed again
-      md.setM1Speed(0);
-      md.setM2Speed(0);
-      isFirstTestSegment = true;
-      isSecondTestSegment = false;
-      twisterTriggerGo = true;
-      elevatorTriggerGo = true;
-      if (lowerLimitSwitch == HIGH){
-        Serial.print(retryCount);
-        Serial.println(" Lower Limit Switch Hit ---------------------------------------------------------- ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR");
-      }
-      if (upperLimitSwitch == HIGH){
-        Serial.print(retryCount);
-        Serial.println(" Upper Limit Switch Hit ---------------------------------------------------------- ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR");
-      }
-      isRetry = true;
-      isLowerLimitKnown = false;
-      isUpperLimitKnown = false;
-      isHomed = false;
-      retryCount++;
-      if (retryCount > 10){
-        Serial.println("Maximum Retry Reached. Check machine bounds.");
+      if (isCableFailure){
+        md.setM1Speed(0);
+        md.setM2Speed(0);
+        Serial.println("Cable Failure - check Cable Eye");
         md.disableDrivers();
         while(1);
       }
-      delay(1000);
-      state = 2;
+      else{
+        // case if one of the limit swtiches has been hit
+        // this means that the elevator has drifted outside of the safe testing area and will be homed again
+        md.setM1Speed(0);
+        md.setM2Speed(0);
+        isFirstTestSegment = true;
+        isSecondTestSegment = false;
+        twisterTriggerGo = true;
+        elevatorTriggerGo = true;
+        if (lowerLimitSwitch == HIGH){
+          Serial.print(retryCount);
+          Serial.println(" Lower Limit Switch Hit ---------------------------------------------------------- ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR");
+        }
+        if (upperLimitSwitch == HIGH){
+          Serial.print(retryCount);
+          Serial.println(" Upper Limit Switch Hit ---------------------------------------------------------- ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR ERROR");
+        }
+        isRetry = true;
+        isLowerLimitKnown = false;
+        isUpperLimitKnown = false;
+        isHomed = false;
+        retryCount++;
+        if (retryCount > 10){
+          Serial.println("Maximum Retry Reached. Check machine bounds.");
+          md.disableDrivers();
+          while(1);
+        }
+        delay(1000);
+        state = 2;
+      }
     }
   }
   //-------------------------------------------------------------------------------------------------//
